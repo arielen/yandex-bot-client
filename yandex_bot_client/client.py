@@ -188,6 +188,30 @@ class Bot:
                 flat.append(b)
         return flat
 
+    async def _post_send_text(self, payload: Dict[str, Any], *, op: str) -> Optional[int]:
+        if not self._session:
+            return None
+        try:
+            async with self._session.post(f"{BASE_URL}/messages/sendText", json=payload) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    self._log.error("{} {}: {}", op, resp.status, body)
+                    return None
+
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:
+                    body = await resp.text()
+                    data = json.loads(body) if body else {}
+
+                if isinstance(data, dict):
+                    message_id = data.get("message_id")
+                    return message_id if isinstance(message_id, int) else None
+                return None
+        except Exception as e:
+            self._log.exception("{}: {}", op, e)
+            return None
+
     async def send_message(
         self,
         login: str,
@@ -195,22 +219,27 @@ class Bot:
         keyboard: Optional[List[List[Dict]]] = None,
     ) -> Optional[int]:
         """Шлёт текст пользователю по login. keyboard — результат Keyboard().build(), можно не передавать. Возвращает message_id или None."""
-        if not self._session:
-            return None
         payload: Dict[str, Any] = {"text": text, "login": login}
         if keyboard is not None:
-            payload["inline_keyboard"] = self._keyboard_for_api(keyboard)
-        try:
-            async with self._session.post(f"{BASE_URL}/messages/sendText", json=payload) as resp:
-                body = await resp.text()
-                if resp.status != 200:
-                    self._log.error("send_message {}: {}", resp.status, body)
-                    return None
-                data = json.loads(body) if body else {}
-                return data.get("message_id")
-        except Exception as e:
-            self._log.exception("send_message: {}", e)
-            return None
+            k = self._keyboard_for_api(keyboard)
+            if k is not None:
+                payload["inline_keyboard"] = k
+        return await self._post_send_text(payload, op="send_message")
+
+    async def edit_message_text(
+        self,
+        login: str,
+        message_id: int,
+        text: str,
+        keyboard: Optional[List[List[Dict]]] = None,
+    ) -> Optional[int]:
+        """Редактирует сообщение по login. keyboard — результат Keyboard().build(), можно не передавать. Возвращает message_id или None."""
+        payload: Dict[str, Any] = {"text": text, "login": login, "message_id": message_id}
+        if keyboard is not None:
+            k = self._keyboard_for_api(keyboard)
+            if k is not None:
+                payload["inline_keyboard"] = k
+        return await self._post_send_text(payload, op="edit_message_text")
 
     async def reply(
         self,
